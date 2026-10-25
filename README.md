@@ -42,6 +42,7 @@ runtime, requirements, and known limitations.
 - [Lucide React](https://lucide.dev/) for icons
 - [Transformers.js v4](https://huggingface.co/docs/transformers.js) (`@huggingface/transformers`) for in-browser, WebGPU-accelerated model inference
 - [Zod](https://zod.dev/) for validating model-generated structured output (Smart Ticket Creator)
+- [vite-plugin-pwa](https://vite-pwa-org.netlify.app/) (Workbox) for the offline service worker — precaches the app shell and runtime-caches downloaded models (see [Offline support](#offline-support))
 
 ## Getting started
 
@@ -60,6 +61,64 @@ npm run build
 # Preview the production build locally
 npm run preview
 ```
+
+> The service worker that powers offline use is only generated in a **production
+> build** — it is inactive under `npm run dev`. To try offline behaviour locally,
+> run `npm run build` then `npm run preview`. See [Offline support](#offline-support).
+
+## Offline support
+
+The app is a **Progressive Web App**: after the first online visit it keeps
+working with no network, and once a feature's model has been downloaded that
+feature runs **fully offline**. This is a natural fit for the project — all
+inference already runs on-device, so the only thing that needs the network is the
+one-time asset and model download.
+
+Offline is handled by a [Workbox](https://developer.chrome.com/docs/workbox)
+service worker generated at build time by
+[vite-plugin-pwa](https://vite-pwa-org.netlify.app/) (configured in
+[`vite.config.ts`](vite.config.ts)):
+
+- **App shell is precached.** All built JS, CSS, HTML, SVG, and the ONNX Runtime
+  **WebAssembly** binaries are precached on first load, so the UI (and the CPU
+  inference backend) opens with no network. Deep links / refreshes resolve
+  offline via an `index.html` navigation fallback that respects the GitHub Pages
+  base path.
+- **Models are runtime-cached.** The one-time model downloads from the Hugging
+  Face Hub (`huggingface.co` and the `cdn-lfs*` LFS/CDN hosts the weight blobs
+  redirect to) are cached with a **CacheFirst** strategy (range requests enabled,
+  so Transformers.js's chunked weight fetches are cached too). After a feature's
+  model has been fetched once, it is served from the cache — no re-download, and
+  it works offline.
+- **Auto-update.** `registerType: 'autoUpdate'` means a new deployment is fetched
+  and activated automatically; there's no update prompt to dismiss. The worker is
+  registered in [`src/pwa.ts`](src/pwa.ts) (wired into
+  [`src/main.tsx`](src/main.tsx)).
+
+### What works offline — and what doesn't
+
+- ✅ **The app itself** (every tab's UI, routing, deep links) works offline after
+  the first visit.
+- ✅ **Any feature whose model you've already loaded online** works offline —
+  inference runs locally via WebGPU/WASM against the cached weights.
+- ⚠️ **A model is cached only after you open that tab online** and let it
+  download once. Each feature downloads its own model lazily, so a tab you've
+  never opened online won't have its weights cached and won't run offline until
+  you do.
+- ⚠️ **Pause & Ask still needs a camera** (a device, not the network) and a
+  secure context; the *model* works offline once cached, like the others.
+- ℹ️ Model downloads are large (≈23 MB for Semantic Search up to ≈786 MB for
+  Smart Ticket Creator), so the **first** online visit to a tab still pays the
+  download cost before that tab can go offline.
+
+### Testing offline locally
+
+1. `npm run build` then `npm run preview`.
+2. Open a tab (e.g. **Semantic Search** for the smallest download) and let its
+   model finish downloading once.
+3. In DevTools → **Network**, switch to **Offline** (or **Application →
+   Service Workers → Offline**), then reload and use that tab — it should keep
+   working with no network.
 
 ## AI Accessibility — Local Alt Text Generator
 
@@ -938,7 +997,8 @@ src/
   lib/           # cn() className helper
   types/         # Shared types (Feature, FeatureId, BrowserTech)
   router.tsx     # Route config: lazy pages, / redirect, 404 fallback
-  main.tsx       # Entry point (RouterProvider)
+  main.tsx       # Entry point (RouterProvider + service-worker registration)
+  pwa.ts         # Service-worker registration for offline support (vite-plugin-pwa)
   index.css      # Tailwind import + theme
 ```
 
