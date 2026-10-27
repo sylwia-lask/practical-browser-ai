@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from 'react'
-import { Scissors, Sparkles, RotateCcw, X, Loader2, Download, Info } from 'lucide-react'
+import { Scissors, Sparkles, RotateCcw, X, Loader2, Download, Info, ImageDown } from 'lucide-react'
 import { FeaturePanel } from '../../components/ui/FeaturePanel'
 import { Badge } from '../../components/ui/Badge'
 import { cn } from '../../lib/cn'
@@ -13,6 +13,7 @@ import {
   downloadBlob,
   cutoutFilename,
 } from './useBackgroundRemover'
+import { loadSampleFile } from './sample'
 import { MODEL_ID } from './types'
 
 /** The uploaded source image: preview URL, dimensions, and original filename. */
@@ -59,6 +60,16 @@ export function BackgroundRemover() {
     },
     [reset],
   )
+
+  const handleSample = useCallback(async () => {
+    setImageError(null)
+    try {
+      const file = await loadSampleFile()
+      await handleFile(file)
+    } catch (err) {
+      setImageError(err instanceof Error ? err.message : 'Could not load the sample photo.')
+    }
+  }, [handleFile])
 
   const handleRemove = useCallback(() => {
     if (!source) return
@@ -108,6 +119,22 @@ export function BackgroundRemover() {
         {!source ? (
           <>
             <Dropzone onFile={handleFile} disabled={busy} />
+            <div className="flex items-center gap-3 text-xs text-gray-500">
+              <span className="h-px flex-1 bg-white/10" />
+              or
+              <span className="h-px flex-1 bg-white/10" />
+            </div>
+            <div className="flex justify-center">
+              <button
+                type="button"
+                onClick={handleSample}
+                disabled={busy}
+                className="inline-flex items-center gap-2 rounded-md border border-white/15 bg-white/5 px-3 py-1.5 text-sm font-medium text-gray-100 transition-colors hover:bg-white/10 focus:outline-none focus-visible:ring-2 focus-visible:ring-indigo-400 disabled:cursor-not-allowed disabled:opacity-60"
+              >
+                <ImageDown className="size-4" aria-hidden="true" />
+                Upload sample photo
+              </button>
+            </div>
             {imageError && (
               <p className="rounded-md border border-rose-400/30 bg-rose-500/10 px-3 py-2 text-sm text-rose-200">
                 {imageError}
@@ -144,6 +171,23 @@ export function BackgroundRemover() {
                       Remove
                     </button>
                   )}
+                </div>
+              )}
+
+              {/* Standalone preview of the result on a checkerboard. */}
+              {hasResult && cutout && (
+                <div className="space-y-1.5">
+                  <p className="text-xs font-medium text-gray-400">Result</p>
+                  <div
+                    className="relative w-full overflow-hidden rounded-lg border border-white/10 bg-[length:20px_20px] [background-image:conic-gradient(#2a2a33_90deg,transparent_90deg_180deg,#2a2a33_180deg_270deg,transparent_270deg)] [background-position:0_0,10px_10px]"
+                    style={{ aspectRatio: String(aspectRatio) }}
+                  >
+                    <img
+                      src={cutout.url}
+                      alt="Background removed"
+                      className="absolute inset-0 size-full object-contain"
+                    />
+                  </div>
                 </div>
               )}
 

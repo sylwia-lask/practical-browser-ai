@@ -26,7 +26,7 @@ export default defineConfig({
         // Model weights and the ONNX Runtime WASM binaries are large; raise the
         // precache size limit so the app-shell WASM files are not skipped.
         maximumFileSizeToCacheInBytes: 600 * 1024 * 1024,
-        globPatterns: ['**/*.{js,css,html,svg,ico,png,wasm}'],
+        globPatterns: ['**/*.{js,css,html,svg,ico,png,jpg,jpeg,webp,wasm}'],
         // Explicit fallback so the SW resolves index.html correctly under the
         // GitHub Pages subpath base, giving working offline deep links.
         navigateFallback: `${base}index.html`,
