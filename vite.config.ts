@@ -34,7 +34,10 @@ export default defineConfig({
         runtimeCaching: [
           {
             // Hugging Face Hub: model config, tokenizer, and ONNX weight files.
-            urlPattern: /^https:\/\/huggingface\.co\/.*/i,
+            // The Object Remover's LaMa model is excluded: its worker keeps its
+            // own integrity-checked copy in Cache Storage, so caching it here
+            // too would store the same ~37 MB twice.
+            urlPattern: /^https:\/\/huggingface\.co\/(?!othytenk\/lama-int4-int8\/).*/i,
             handler: 'CacheFirst',
             options: {
               cacheName: 'hf-models',
@@ -66,7 +69,7 @@ export default defineConfig({
       manifest: {
         name: 'Practical Browser AI',
         short_name: 'Browser AI',
-        description: '5 practical AI features. No backend. No cloud. Just your browser.',
+        description: '6 practical AI features. No backend. No cloud. Just your browser.',
         theme_color: '#030712',
         background_color: '#030712',
         display: 'standalone',

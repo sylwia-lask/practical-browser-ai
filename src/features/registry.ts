@@ -1,4 +1,4 @@
-import { Accessibility, Ticket, Video, Search, Scissors } from 'lucide-react'
+import { Accessibility, Ticket, Video, Search, Scissors, Eraser } from 'lucide-react'
 import type { Feature } from '../types'
 
 /**
@@ -14,6 +14,14 @@ export const features: Feature[] = [
     title: 'AI Background Remover',
     description: 'Remove an image background locally and download a transparent PNG.',
     icon: Scissors,
+  },
+  {
+    id: 'object-remover',
+    path: '/object-remover',
+    label: 'Object Remover',
+    title: 'AI Object Remover',
+    description: 'Paint over unwanted objects in a photo and erase them locally.',
+    icon: Eraser,
   },
   {
     id: 'ai-accessibility',
