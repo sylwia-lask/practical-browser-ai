@@ -20,8 +20,19 @@ interface EditorProps {
  * repeat. Each result becomes the new working image; Undo steps back.
  */
 export function Editor({ original, remover, onReset }: EditorProps) {
-  const { status, support, device, progress, current, editCount, error, prepare, inpaint, undo } =
-    remover
+  const {
+    status,
+    support,
+    device,
+    progress,
+    current,
+    editCount,
+    canUndo,
+    error,
+    prepare,
+    inpaint,
+    undo,
+  } = remover
 
   const painterRef = useRef<MaskPainterHandle>(null)
   const [brushSize, setBrushSize] = useState(32)
@@ -160,7 +171,7 @@ export function Editor({ original, remover, onReset }: EditorProps) {
           <button
             type="button"
             onClick={undo}
-            disabled={busy || editCount === 0}
+            disabled={busy || !canUndo}
             className="inline-flex items-center gap-2 rounded-md border border-white/15 bg-white/5 px-3 py-2 text-sm text-gray-200 transition-colors hover:bg-white/10 disabled:cursor-not-allowed disabled:opacity-50"
           >
             <Undo2 className="size-4" aria-hidden="true" />

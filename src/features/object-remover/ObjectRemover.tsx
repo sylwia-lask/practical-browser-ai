@@ -28,23 +28,36 @@ export function ObjectRemover() {
   const [source, setSource] = useState<SourceImage | null>(null)
   const [imageError, setImageError] = useState<string | null>(null)
 
-  // Keep the current source URL in a ref so unmount cleanup can revoke it.
+  // The current source URL, kept in a ref (updated as soon as a source is
+  // swapped in) so a later upload or unmount can revoke it.
   const sourceUrlRef = useRef<string | null>(null)
+
+  // Upload guard: every upload (file or sample) takes a new id, and only the
+  // latest one may set the source. Picking two images quickly can otherwise let
+  // the first, slower decode finish last and overwrite the newer selection.
+  // Reset and unmount bump the id too, so anything still in flight is dropped.
+  const uploadIdRef = useRef(0)
+
   useEffect(() => {
-    sourceUrlRef.current = source?.url ?? null
-  }, [source])
-  useEffect(() => {
-    return () => releaseImage(sourceUrlRef.current)
+    return () => {
+      uploadIdRef.current++
+      releaseImage(sourceUrlRef.current)
+      sourceUrlRef.current = null
+    }
   }, [])
 
-  const handleFile = useCallback(
-    async (file: File) => {
-      setImageError(null)
-      resetEdits()
+  /** Decode `file` for upload `id`; a stale result is revoked, not shown. */
+  const loadFile = useCallback(
+    async (file: File, id: number) => {
       try {
         const prepared = await prepareImage(file)
+        if (id !== uploadIdRef.current) {
+          releaseImage(prepared.url)
+          return
+        }
         // Swap in the new source, revoking the previous preview URL.
         releaseImage(sourceUrlRef.current)
+        sourceUrlRef.current = prepared.url
         setSource({
           url: prepared.url,
           width: prepared.width,
@@ -52,24 +65,43 @@ export function ObjectRemover() {
           name: file.name,
         })
       } catch (err) {
+        if (id !== uploadIdRef.current) return
         setImageError(err instanceof Error ? err.message : 'Could not load that image.')
       }
     },
-    [resetEdits],
+    [],
+  )
+
+  const handleFile = useCallback(
+    (file: File) => {
+      const id = ++uploadIdRef.current
+      setImageError(null)
+      resetEdits()
+      void loadFile(file, id)
+    },
+    [loadFile, resetEdits],
   )
 
   const handleSample = useCallback(async () => {
+    // Take the id before fetching, so a file picked while the sample is still
+    // loading wins over it.
+    const id = ++uploadIdRef.current
     setImageError(null)
+    resetEdits()
     try {
       const file = await loadSampleFile()
-      await handleFile(file)
+      if (id !== uploadIdRef.current) return
+      await loadFile(file, id)
     } catch (err) {
+      if (id !== uploadIdRef.current) return
       setImageError(err instanceof Error ? err.message : 'Could not load the sample photo.')
     }
-  }, [handleFile])
+  }, [loadFile, resetEdits])
 
   const handleReset = useCallback(() => {
+    uploadIdRef.current++
     releaseImage(sourceUrlRef.current)
+    sourceUrlRef.current = null
     setSource(null)
     setImageError(null)
     resetEdits()

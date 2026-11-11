@@ -30,7 +30,11 @@ export interface Edit {
   height: number
 }
 
-/** Max undo steps kept in memory. */
+/**
+ * Max edits kept in memory. Once older edits are evicted, the oldest one still
+ * kept becomes the undo floor, so undo never jumps back past evicted steps to
+ * the original image.
+ */
 const MAX_HISTORY = 10
 
 export interface UseObjectRemover {
@@ -40,8 +44,10 @@ export interface UseObjectRemover {
   progress: ModelFileProgress[]
   /** Latest edit, or null when the image is untouched. */
   current: Edit | null
-  /** Number of edits that can be undone. */
+  /** Number of edits applied to the image (including ones evicted from history). */
   editCount: number
+  /** Whether `undo()` can step back (false at the original or at the undo floor). */
+  canUndo: boolean
   error: string | null
   /** Spin up the worker and probe WebGPU (no model download). */
   prepare: () => void
@@ -65,13 +71,20 @@ export function useObjectRemover(): UseObjectRemover {
   const [history, setHistory] = useState<Edit[]>([])
   const [error, setError] = useState<string | null>(null)
 
-  const requestIdRef = useRef(0)
-  // Mirror of `history` for unmount cleanup and message handlers.
-  const historyRef = useRef<Edit[]>([])
+  // How many of the oldest edits were evicted from `history`. While > 0, the
+  // first kept entry is the undo floor (the original is no longer reachable).
+  const [evicted, setEvicted] = useState(0)
 
-  const commitHistory = useCallback((next: Edit[]) => {
+  const requestIdRef = useRef(0)
+  // Mirrors of `history` / `evicted` for unmount cleanup and message handlers.
+  const historyRef = useRef<Edit[]>([])
+  const evictedRef = useRef(0)
+
+  const commitHistory = useCallback((next: Edit[], nextEvicted: number) => {
     historyRef.current = next
+    evictedRef.current = nextEvicted
     setHistory(next)
+    setEvicted(nextEvicted)
   }, [])
 
   const ensureWorker = useCallback((): Worker => {
@@ -79,6 +92,28 @@ export function useObjectRemover(): UseObjectRemover {
 
     const worker = new Worker(new URL('./worker.ts', import.meta.url), {
       type: 'module',
+    })
+
+    // A hard worker failure (the module failed to load, an uncaught error, or a
+    // message that could not be deserialized) never arrives as a normal
+    // 'message', so without this the UI would stay stuck in a loading state.
+    // Drop the broken worker and show the error; the next removal creates a
+    // fresh worker, so the user can simply retry.
+    const fail = (message: string) => {
+      if (workerRef.current !== worker) return
+      worker.terminate()
+      workerRef.current = null
+      requestIdRef.current++ // nothing from the dead worker may land later
+      setProgress([])
+      setError(message)
+      setStatus('error')
+    }
+    worker.addEventListener('error', (e) => {
+      const detail = e.message ? ` (${e.message})` : ''
+      fail(`The inpainting worker stopped unexpectedly${detail}. Please try again.`)
+    })
+    worker.addEventListener('messageerror', () => {
+      fail('The inpainting worker sent a message that could not be read. Please try again.')
     })
 
     worker.addEventListener('message', (event: MessageEvent<InpaintResponse>) => {
@@ -114,9 +149,13 @@ export function useObjectRemover(): UseObjectRemover {
             height: msg.height,
           }
           const next = [...historyRef.current, edit]
+          let nextEvicted = evictedRef.current
           // Evict (and revoke) the oldest entries beyond the cap.
-          while (next.length > MAX_HISTORY) revoke(next.shift())
-          commitHistory(next)
+          while (next.length > MAX_HISTORY) {
+            revoke(next.shift())
+            nextEvicted++
+          }
+          commitHistory(next, nextEvicted)
           setStatus('done')
           break
         }
@@ -162,10 +201,14 @@ export function useObjectRemover(): UseObjectRemover {
   )
 
   const undo = useCallback(() => {
+    const prev = historyRef.current
+    // At the undo floor: older edits were evicted, so keep the oldest one left.
+    const floor = evictedRef.current > 0 ? 1 : 0
+    if (prev.length <= floor) return
     requestIdRef.current++ // discard anything in flight
-    const next = historyRef.current.slice(0, -1)
-    revoke(historyRef.current[historyRef.current.length - 1])
-    commitHistory(next)
+    const next = prev.slice(0, -1)
+    revoke(prev[prev.length - 1])
+    commitHistory(next, evictedRef.current)
     setError(null)
     setStatus(next.length ? 'done' : 'idle')
   }, [commitHistory])
@@ -173,7 +216,7 @@ export function useObjectRemover(): UseObjectRemover {
   const reset = useCallback(() => {
     requestIdRef.current++
     historyRef.current.forEach(revoke)
-    commitHistory([])
+    commitHistory([], 0)
     setError(null)
     setProgress([])
     setStatus('idle')
@@ -185,7 +228,8 @@ export function useObjectRemover(): UseObjectRemover {
     device,
     progress,
     current: history[history.length - 1] ?? null,
-    editCount: history.length,
+    editCount: evicted + history.length,
+    canUndo: history.length > (evicted > 0 ? 1 : 0),
     error,
     prepare,
     inpaint,
