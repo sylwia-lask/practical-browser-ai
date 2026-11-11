@@ -1,6 +1,6 @@
 # Practical Browser AI
 
-**5 practical AI features. No backend. No cloud. Just your browser.**
+**6 practical AI features. No backend. No cloud. Just your browser.**
 
 **Live demo:** [sylwia-lask.github.io/practical-browser-ai](https://sylwia-lask.github.io/practical-browser-ai/pause-and-ask)
 
@@ -22,15 +22,17 @@ client using browser-compatible models through technologies such as
 | **Pause & Ask** ✅ | Start your webcam, pause on a frame, and ask a local vision-language model natural-language questions about it. |
 | **Semantic Search** ✅ | Search a collection of support tickets by meaning — a local embedding model turns text into vectors and ranks results by cosine similarity, with a non-AI keyword-search comparison. |
 | **AI Background Remover** ✅ | Upload an image, strip its background with a local saliency-segmentation model, and download a transparent PNG. |
+| **AI Object Remover** ✅ | Paint over unwanted objects in a photo and erase them with a local inpainting model (LaMa). |
 
-> **Status:** All five tabs are fully implemented and run real in-browser
+> **Status:** All six tabs are fully implemented and run real in-browser
 > inference (Semantic Search uses a local embedding model, not a generative one).
 
 See [AI Accessibility](#ai-accessibility--local-alt-text-generator),
 [Smart Ticket Creator](#smart-ticket-creator-1),
 [Pause & Ask](#pause--ask-1),
-[Semantic Search](#semantic-search-1), and
-[AI Background Remover](#ai-background-remover-1) below for each feature's model,
+[Semantic Search](#semantic-search-1),
+[AI Background Remover](#ai-background-remover-1), and
+[AI Object Remover](#ai-object-remover) below for each feature's model,
 runtime, requirements, and known limitations.
 
 ## Tech stack
@@ -979,6 +981,150 @@ pulls weights it doesn't need.
 5. **Download Transparent PNG** (enabled only once a valid result exists) saves
    the cut-out. **Reset** clears everything; the model stays loaded.
 
+## AI Object Remover
+
+Upload a photo (PNG, JPEG, or WebP), **paint over anything you want gone** — a
+person in the background, a cable, a stain — and click **Remove selected**. A
+local inpainting model fills the area with plausible surroundings. Edits stack
+(each result becomes the image for the next one), with **Undo**, a before/after
+slider shown after each removal, and **Download Edited PNG**.
+
+**Nothing leaves the device.** The model is downloaded from the Hugging Face Hub
+once (then cached) and all selection, inpainting, and PNG encoding run locally
+in your browser and a Web Worker. **Your images are never uploaded**, and there
+is no cloud fallback.
+
+### Model and runtime
+
+| | |
+| --- | --- |
+| **Model** | [`othytenk/lama-int4-int8`](https://huggingface.co/othytenk/lama-int4-int8) (`lama_int4_int8_r4.onnx`) — [LaMa](https://github.com/advimman/lama) (big-lama, WACV 2022) as a weight-quantized copy of [`Carve/LaMa-ONNX`](https://huggingface.co/Carve/LaMa-ONNX). Pinned to commit `b52ebb6`. |
+| **License** | **Apache-2.0** — fine for commercial use. Training data: Places2 (please credit its authors). |
+| **Task** | **Image inpainting** — `image` (float32 RGB / 255, `[1,3,512,512]`) + `mask` (float32, 1 = fill, `[1,1,512,512]`) → `output` (float32 RGB in `[0,255]`). |
+| **Runtime** | [ONNX Runtime Web](https://onnxruntime.ai/docs/tutorials/web/) directly (`onnxruntime-web/webgpu`), with `session.disable_quant_qdq = "1"` so the int4/int8 weights are folded to fp32 once at load. LaMa is a plain ONNX graph with no Transformers.js model class; this is the same runtime Transformers.js already ships, pinned to the same version, so no extra runtime is downloaded. |
+| **Acceleration** | **WebGPU** when available, falling back to WebAssembly (CPU) if the session can't be created or a run fails on the GPU. |
+
+### Why this model?
+
+- **It was compared on real photos.** Side by side with
+  [MI-GAN](https://huggingface.co/andraniksargsyan/migan) (MIT, 28 MB) on a
+  crumpled tissue on a desk, using the same hand-traced mask, MI-GAN left a
+  grey-brown smudge and, with a larger mask, invented paper shapes and a yellow
+  streak. LaMa continued the wall and desk.
+- **It's small for what it does.** The quantized file matches the fp32 LaMa
+  closely (32 dB PSNR inside the hole on that test) at under a fifth of the
+  size.
+- **Permissive license.** Apache-2.0, unlike the non-commercial RMBG-1.4 used by
+  the Background Remover.
+
+### Approximate download size
+
+The first removal downloads **~37 MB** (36,931,151 bytes) — versus 208 MB for
+the fp32 export. The file's SHA-256 is checked before it is cached, and later
+visits reuse it with no re-download.
+
+### How image processing works
+
+1. **Select.** A canvas the same pixel size as the image sits over it; brush
+   strokes are mapped from screen to image pixels. No model is involved.
+2. **Grow the mask.** The selection is grown by a few pixels (4 px at 1344 px
+   wide, 7 px at the 2048 px cap). Object pixels left just outside the
+   selection otherwise get smeared into the fill as a ghost.
+3. **Crop.** LaMa only accepts 512×512, so the worker takes a square crop
+   centred on the hole with about as much context as the hole itself (2× its
+   longest side, at least 512 px, at most the image's shorter side — so on a
+   small photo the square is scaled *up* rather than stretched). The mask is
+   resized conservatively: each of the 512×512 mask pixels is a hole if any
+   source pixel under it is. (Mapping source pixels to targets instead leaves
+   gaps when scaling up, and LaMa then copies the object back through them.)
+4. **Infer** on the crop, then resize the fill back to the crop's size.
+5. **Lossless write-back.** Only hole pixels are replaced; every other pixel
+   stays bit-identical to the input, and the original alpha is kept.
+6. **Export.** The worker encodes the PNG with `OffscreenCanvas.convertToBlob`
+   and posts the `Blob` back, so no raw pixel buffer crosses threads.
+
+### Offline
+
+The model bytes are stored in Cache Storage (`object-remover-models`) after the
+integrity check. Its URL is excluded from the service worker's Hugging Face
+cache rule in `vite.config.ts`, so the file is stored once, not twice. The ONNX Runtime `.wasm` is the copy Vite bundles into the
+build (we don't point `wasmPaths` at a CDN), so it is precached by the service
+worker with the rest of the app shell.
+
+### Measured performance
+
+Apple M2, Chromium, WebGPU: the first removal takes ~16–18 s including the
+one-time download and model setup; with the model already loaded a removal takes
+~1.3–2 s. After a page reload, model setup from cache brings a removal to
+~9–11 s. On the WebAssembly (CPU) fallback a removal took ~20–60 s in our runs.
+
+### What was tested
+
+In the browser, each with a hand-traced selection:
+
+| Photo | Result |
+| --- | --- |
+| Surfer behind a person doing a handstand (beach) | Clean: waves and sand continue, close to a reference edit. |
+| Driftwood and its reflection (sunset lake) | Clean, smooth water; shoreline intact. |
+| Crumpled tissue on a desk | Clean, with a faint darker patch where its shadow was. |
+| Three people on a beach (large hole) | People gone; the filled sea is smoother and slightly lighter than the real sea. |
+| Cans, remote, charger and cables on a wooden table | Objects gone, but the wood is blurry with a dark blotch — not convincing up close. |
+
+Post-processing to restore texture (PatchMatch detail transfer) and brightness
+at the seam were tried and **removed**: each helped one photo but caused visible
+artifacts on others (swirls across the wood grain, a smudged shoreline).
+
+### Sample photo
+
+**Upload sample photo** loads a bundled picture so the feature can be tried
+without your own image: "Group of friends admiring a mountain lake view" by
+[Ben Kupke](https://unsplash.com/@benkupke) on
+[Unsplash](https://unsplash.com/photos/8cv59Ix2psA), used under the
+[Unsplash License](https://unsplash.com/license). It is a 1600×1067 JPEG
+(~330 KB) and is precached by the service worker, so it works offline too.
+
+### Known limitations
+
+- **Not perfect.** Large selections over structured surfaces (wood grain,
+  floors, fabric) come out soft, and large fills can be slightly lighter than
+  their surroundings. Holes over detailed structure (faces, text, repeating
+  patterns) will look softer — the fill is generated at 512×512 and scaled to
+  the crop.
+- Cover the whole object, including its shadow and reflection; anything left
+  unselected stays.
+- Selection is by brush only (mouse, touch, or pen). There is no keyboard
+  alternative for painting yet.
+- Only tested in Chromium on macOS so far.
+
+### How it's built (architecture)
+
+The feature is split into focused modules under `src/features/object-remover/`:
+
+```text
+worker.ts            # LaMa via ONNX Runtime Web: cached + integrity-checked load, mask growth, 512 crop, write-back
+useObjectRemover.ts  # React hook: worker lifecycle, stale-result guarding, edit history/undo, download
+image.ts             # Upload validation + EXIF-correct decode + downscale + object-URL cleanup
+types.ts             # Pinned model URL/revision/SHA-256, device/progress types, worker message protocol
+sample.ts            # Bundled sample photo (sample.jpg) loaded as a File, precached for offline use
+components/          # Dropzone, MaskPainter (brush), Editor, ModelStatus, BeforeAfter (comparison slider)
+```
+
+It follows the Background Remover's structure (worker + hook + typed protocol)
+but shares no code with it, like every other feature here.
+
+### How to run and test
+
+1. `npm install` then `npm run dev`, and open the **Object Remover** tab (or go
+   to `/object-remover`).
+2. Drag in a photo (or **Choose file**), or click **Upload sample photo**.
+3. Paint over what you want removed — generously, including shadows — and click
+   **Remove selected**. The first run downloads the model (~37 MB); later
+   removals reuse it.
+4. A before/after slider appears right away, with the **Result** below it. Paint on
+   the Result to remove more objects, or **Undo** a step.
+5. **Download Edited PNG** saves the result. **Reset** clears everything; the
+   model stays loaded.
+
 ## Project structure
 
 ```text
@@ -992,6 +1138,7 @@ src/
     pause-and-ask/             # ✅ implemented (LFM2.5-VL-450M, live camera VQA)
     semantic-search/           # ✅ implemented (all-MiniLM-L6-v2, embeddings + cosine search)
     background-remover/        # ✅ implemented (RMBG-1.4, foreground segmentation -> transparent PNG)
+    object-remover/            # ✅ implemented (LaMa, inpainting -> edited PNG)
     registry.ts  # Navigation metadata for the tab bar
   hooks/         # Feature-specific hooks (added later)
   lib/           # cn() className helper
@@ -1013,6 +1160,7 @@ Each feature is an independent, bookmarkable route served under a shared layout:
 | `/pause-and-ask` | Pause & Ask |
 | `/semantic-search` | Semantic Search |
 | `/background-remover` | AI Background Remover |
+| `/object-remover` | AI Object Remover |
 
 - `/` redirects to `/background-remover`.
 - Unknown routes render a simple **Page not found** fallback.

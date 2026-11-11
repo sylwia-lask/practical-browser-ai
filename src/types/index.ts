@@ -7,6 +7,7 @@ export type FeatureId =
   | 'pause-and-ask'
   | 'semantic-search'
   | 'background-remover'
+  | 'object-remover'
 
 /** Browser technology a feature will eventually rely on. */
 export type BrowserTech = 'Transformers.js' | 'WebGPU' | 'WebAssembly' | 'ONNX Runtime'

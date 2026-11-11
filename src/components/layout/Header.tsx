@@ -15,7 +15,7 @@ export function Header() {
           </h1>
         </div>
         <p className="mt-3 max-w-2xl text-sm text-gray-400 sm:text-base">
-          5 practical AI features. No backend. No cloud. Just your browser.
+          6 practical AI features. No backend. No cloud. Just your browser.
         </p>
         <div className="mt-4 flex flex-wrap items-center gap-2">
           <Badge>

@@ -14,6 +14,7 @@ const SemanticSearch = lazy(() => import('./features/semantic-search/SemanticSea
 const BackgroundRemover = lazy(
   () => import('./features/background-remover/BackgroundRemover'),
 )
+const ObjectRemover = lazy(() => import('./features/object-remover/ObjectRemover'))
 
 export const router = createBrowserRouter(
   [
@@ -28,6 +29,7 @@ export const router = createBrowserRouter(
       { path: 'pause-and-ask', element: <PauseAndAsk /> },
       { path: 'semantic-search', element: <SemanticSearch /> },
       { path: 'background-remover', element: <BackgroundRemover /> },
+      { path: 'object-remover', element: <ObjectRemover /> },
       // Fallback for unknown routes (rendered inside the shared layout).
       { path: '*', element: <NotFound /> },
     ],
